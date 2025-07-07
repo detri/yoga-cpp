@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.15)
+set(YOGA_VERSION v3.2.1)
+set(YOGACPP_VERSION 1.0.0)
+project(yoga_cpp VERSION ${YOGACPP_VERSION} LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+
+include(FetchContent)
+
+FetchContent_Declare(yoga
+    GIT_REPOSITORY https://github.com/facebook/yoga.git
+    GIT_TAG ${YOGA_VERSION}
+)
+
+FetchContent_MakeAvailable(yoga)
+
+add_library(yoga_cpp STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/yoga-cpp/yoga.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/yoga.cpp
+)
+
+target_link_libraries(yoga_cpp PUBLIC yogacore)
+target_include_directories(yoga_cpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+option(YOGACPP_BUILD_EXAMPLES "Build example program(s)" OFF)
+
+if (YOGACPP_BUILD_EXAMPLES)
+    add_executable(print_dimensions ${CMAKE_CURRENT_SOURCE_DIR}/examples/print_dimensions.cpp)
+    target_link_libraries(print_dimensions PRIVATE yoga_cpp)
+
+    add_executable(child_iteration ${CMAKE_CURRENT_SOURCE_DIR}/examples/child_iteration.cpp)
+    target_link_libraries(child_iteration PRIVATE yoga_cpp)
+endif()
