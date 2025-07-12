@@ -6,13 +6,19 @@ Yoga is a layout engine by Meta (née Facebook) which is written
 in C++ but exposes only a C API.
 
 This project aims to provide stable user-facing C++ bindings which
-mirror the C API almost directly.
+wrap the C API in a safe and modern interface.
+
+It also includes the optional and more opinionated `Yoga::Layout` class,
+which provides a simple way to manage and traverse a Yoga layout tree.
 
 ## Features
 
+- Inline docs
 - Templated for safe context usage
 - Yoga C API parity
 - Layout manager
+- Modern C++20 design using concepts and templates
+- Ranges for child iteration
 
 ## Requirements
 - C++20 or later
@@ -81,10 +87,9 @@ The internals consist of:
 
 1. A Yoga::Config which is an owning wrapper around YGConfig.
 2. Flat node storage to keep layout elements alive (you work with copyable references to the tree). This is just `std::vector<OwningNode<Ctx>>`.
-3. An unordered map to store layout contexts by their internal Yoga node pointers. Backed by `std::unordered_map<YGNodeRef, Ctx>`.
-4. A reference (`Node<Ctx>`) to the root node used for calculating the layout.
+3. A reference (`Node<Ctx>`) to the root node used for calculating the layout.
 
-The API is primarily used via the `createNode()` method, which gives you a non-owning reference to a wrapped Yoga node, with which you can do as you please.
+The API is primarily used via the `createNode()` method, which gives you a non-owning reference to a brand new wrapped Yoga node, with which you can do as you please.
 You can also access the root node with `getRoot()` i.e. to set a background color that may exist in a custom context.
 
 ```c++
@@ -96,15 +101,56 @@ Layout<StyleCtx> layout;
 layout.getRoot().getContext().bgColor = Color::Black;
 ```
 
-Nodes and their contexts can be deleted by using `removeNode(Node<Ctx> node)` on a reference.
+Nodes and their contexts can be deleted by using `removeNode(Node<Ctx> node)` on a node reference.
 If you track references (i.e. storing Node\<Ctx\> in a map to "name" them), be careful to get rid of any invalid references.
 You can compare nodes with the underlying pointer using the `Node<Ctx>::getRef()` method.
 
-Nodes are bool-convertible, so you can write an `if (node)` block to check for validity.
+The layout can be calculated based on available viewport space using `calculate(width, height, direction = YGDirectionLTR)`.
 
-The layout can be calculated based on available app or screen width using `calculate(width, height, direction = YGDirectionLTR)`.
+### Traversing a Layout Tree
+
+Children can be accessed from a node via their `getChildren()` method:
+
+```c++
+for (auto child : node.getChildren()) {
+  // WARNING: avoid removing nodes while iterating
+  child.getContext().doStuff();
+}
+```
+You can also traverse the entire tree starting from the root:
+
+```c++
+std::vector<Node<Ctx>> allNodes;
+layout.walkTree([&](const auto& node) {
+    allNodes.emplace_back(node);
+});
+```
+
+### Important: Node Lifetime
+
+A `Node<Ctx>` is a non-owning reference to a node that is managed by a `Layout`. The node's memory is freed when the `Layout` object is destroyed or when you explicitly call `layout.removeNode(node)`.
+
+Be careful to discard any `Node<Ctx>` objects you have stored elsewhere after removing them from the layout, as they will become invalid. You can check for validity by using the `if (node)` pattern.
 
 ## Context
 Once you have a node from a layout, its context can be accessed with `getContext()`.
-Note that this returns a pointer and that contexts are optional in Yoga,
-so please do check it for nullness. It can be accessed mutably or immutably.
+Note that this returns an optional wrapped reference to your context, i.e. `std::optional<std::reference_wrapper<Ctx>>`.
+```c++
+auto ctxWrapper = node.getContext() // std::optional<std::reference_wrapper<DoStuffCtx>>
+if (ctxWrapper) {
+  auto& ctx = ctxWrapper->get(); // DoStuffCtx& (also available as const)
+  ctx.doStuff();
+}
+```
+
+## Usage without Layout
+`yoga-cpp` can be used as plain Yoga bindings by directly constructing
+OwningNodes yourself and hooking them together. The method names mostly follow
+the C API's naming conventions, in pascalCase and without prefixes,
+except `Layout` methods which property names with styles are prefixed by `getLayout` or `setLayout`
+instead of just `get` or `set`.
+
+```c++
+using MyNode = OwningNode<>; // node type with empty/monostate ctx
+auto node = MyNode{}; // fresh, blank node that will be destroyed when the scope exits
+```
