@@ -14,13 +14,18 @@ int main()
     for (int i = 0; i < 10; i++)
     {
         auto child = layout.createNode();
-        child.getContext()->append(std::format("child{}", i));
+        auto ctx = child.getContext();
+        if (ctx)
+        {
+            auto& ctxRef = ctx->get();
+            ctxRef.append(std::format("child{}", i));
+        }
         node.insertChild(child);
     }
 
     for (auto child : node.getChildren())
     {
-        std::cout << child.getContext()->c_str() << '\n';
+        std::cout << child.getContext()->get().c_str() << '\n';
     }
 
     return 0;

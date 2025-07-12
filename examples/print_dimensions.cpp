@@ -15,7 +15,7 @@ int main()
     node.setWidthPercent(50.f);
     node.setHeightPercent(50.f);
     layout.calculate(100.f, 100.f);
-    auto dimensions = std::format(
+    const auto dimensions = std::format(
         "X: {}, Y: {}, W: {}, H: {}",
         node.getLayoutLeft(),
         node.getLayoutTop(),
