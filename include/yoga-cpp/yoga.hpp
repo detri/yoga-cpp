@@ -41,7 +41,7 @@ namespace Yoga
         {
             if (this != &other)
             {
-                if (_ygConfig != nullptr)
+                if (this->_ygConfig != nullptr)
                 {
                     YGConfigFree(_ygConfig);
                 }
@@ -110,8 +110,6 @@ namespace Yoga
     class Node
     {
     public:
-        static constexpr bool isOwning = false;
-
         template <DefaultConstructible LayoutCtx, DefaultConstructible ConfigCtx>
         friend class Layout;
 
@@ -1363,8 +1361,6 @@ namespace Yoga
         using base = Node<Ctx>;
 
     public:
-        static constexpr bool isOwning = true;
-
         OwningNode() : base{YGNodeNew()} { this->setContext(&_context); }
 
         template <DefaultConstructible ConfigCtx>
