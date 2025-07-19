@@ -11,9 +11,9 @@ FetchContent_Declare(yoga
     GIT_REPOSITORY https://github.com/facebook/yoga.git
     GIT_TAG ${YOGA_VERSION}
 )
-set(YOGA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(YOGA_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(yoga)
+
+set_target_properties(yogatests PROPERTIES EXCLUDE_FROM_ALL ON)
 
 add_library(yoga_cpp STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include/yoga-cpp/yoga.hpp
