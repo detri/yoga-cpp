@@ -5,7 +5,6 @@
 
 #include "yoga-cpp/yoga.hpp"
 
-// A simple context struct for testing purposes.
 struct TestContext {
     int id = 0;
     std::string name;
@@ -15,12 +14,10 @@ struct TestContext {
 };
 
 
-// Define types for convenience
 using TestLayout = Yoga::Layout<TestContext>;
 using TestNode = Yoga::Node<TestContext>;
 
-// Test Suite for Layout and Node Lifetime Management
-class LayoutLifetimeTest : public ::testing::Test {
+class LayoutLifetimeTest : public testing::Test {
 protected:
     TestLayout layout;
 };
@@ -40,17 +37,14 @@ TEST_F(LayoutLifetimeTest, ContextCreationAndAccess) {
 
     ASSERT_TRUE(node.valid());
 
-    // Check if the context was constructed correctly
     TestContext& context = node.getContext();
     EXPECT_EQ(context.id, 42);
     EXPECT_EQ(context.name, "MyNode");
 
-    // Modify the context and check if it persists
     context.id = 100;
     EXPECT_EQ(node.getContext().id, 100);
 }
 
-// Test Suite for Child Management API
 class NodeChildManagementTest : public ::testing::Test {
 protected:
     TestLayout layout;
@@ -73,7 +67,6 @@ TEST_F(NodeChildManagementTest, InsertAndRemoveChild) {
     parent.removeChild(child);
     EXPECT_EQ(parent.getChildCount(), 0);
 
-    // The child node should still be valid, just detached
     EXPECT_TRUE(child.valid());
 }
 
