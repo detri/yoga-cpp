@@ -1,5 +1,5 @@
 # Yoga C++ (yoga-cpp)
-#### version 1.0.0 (Yoga version 3.2.1)
+#### version 2.0.0 (Yoga version 3.2.1)
 
 ## Background
 Yoga is a layout engine by Meta (née Facebook) which is written
@@ -7,9 +7,6 @@ in C++ but exposes only a C API.
 
 This project aims to provide stable user-facing C++ bindings which
 wrap the C API in a safe and modern interface.
-
-It also includes the optional and more opinionated `Yoga::Layout` class,
-which provides a simple way to manage and traverse a Yoga layout tree.
 
 ## Features
 
@@ -33,7 +30,7 @@ include(FetchContent)
 
 FetchContent_Declare(yoga_cpp
     GIT_REPOSITORY https://github.com/detri/yoga-cpp.git
-    GIT_TAG v1.0.0
+    GIT_TAG v2.0.0
 )
 
 FetchContent_MakeAvailable(yoga_cpp)
@@ -43,11 +40,9 @@ target_link_libraries(MyTarget PRIVATE yoga_cpp)
 
 The project will download and link Yoga for you, so use yoga-cpp as a drop-in replacement and not an add-on.
 
-
-
 ## Barebones Example
 ```c++
-#include <yoga-cpp/yoga.hpp>
+#include <yoga-cpp/yogav1.hpp>
 #include <iostream>
 #include <format>
 
@@ -58,12 +53,14 @@ using Layout = Yoga::Layout<Empty>;
 int main()
 {
     Layout layout;
-    auto node = layout.createNode();
-    layout.addToRoot(node);
+    auto root = layout.createNode();
+    root.setWidthPercent(100.f);
+    root.setHeightPercent(100.f);
     
+    auto node = root.createChild();
     node.setWidthPercent(50.f);
     node.setHeightPercent(50.f);
-    layout.calculate(100.f, 100.f);
+    root.calculateLayout(100.f, 100.f);
     auto dimensions = std::format(
         "X: {}, Y: {}, W: {}, H: {}",
         node.getLayoutLeft(),
@@ -77,35 +74,37 @@ int main()
 ```
 
 ## Layout\<Ctx\>
-**Layout\<Ctx\>** is a templated class that manages a layout and its contexts for you.
+The main feature is the `Layout<Ctx>` template class.
+Yoga is just a tree of nodes with no concept of ownership or external storage.
 
-The lifetimes of the nodes in a layout are tied to the layout object's lifetime.
+This class provides context storage for any constructible type and acts as a factory
+that ties Yoga layout nodes and user data together.
 
-It has one requirement, which is that the context must be default-constructible.
-
-The internals consist of:
-
-1. A Yoga::Config which is an owning wrapper around YGConfig.
-2. Flat node storage to keep layout elements alive (you work with copyable references to the tree). This is just `std::vector<OwningNode<Ctx>>`.
-3. A reference (`Node<Ctx>`) to the root node used for calculating the layout.
-
-The API is primarily used via the `createNode()` method, which gives you a non-owning reference to a brand new wrapped Yoga node, with which you can do as you please.
-You can also access the root node with `getRoot()` i.e. to set a background color that may exist in a custom context.
-
+In other words, it acts as the source of truth for Yoga node and context lifetimes.
 ```c++
-struct StyleCtx
-{
-    Color bgColor;
-}
-Layout<StyleCtx> layout;
-layout.getRoot().getContext().bgColor = Color::Black;
+Layout<std::monostate> layout; // Creates a layout with "empty" context
 ```
 
-Nodes and their contexts can be deleted by using `removeNode(Node<Ctx> node)` on a node reference.
-If you track references (i.e. storing Node\<Ctx\> in a map to "name" them), be careful to get rid of any invalid references.
-You can compare nodes with the underlying pointer using the `Node<Ctx>::getRef()` method.
+In the spirit of being a manager class, Layouts are not copyable or moveable.
+If you need to model ownership of a Layout, construct and use it as a smart pointer.
 
-The layout can be calculated based on available viewport space using `calculate(width, height, direction = YGDirectionLTR)`.
+You can create a node and context together like this:
+```c++
+Layout<std::string> layout;
+auto node = layout.createNode("I am a context argument");
+```
+
+Node handles are aware of their owning layouts for ergonomics:
+```c++
+Layout<std::monostate> layout;
+auto node = layout.createNode();
+
+// Adding a child through the handle like this:
+auto child = node.createChild();
+// is equivalent to this:
+auto child = layout.createNode();
+node.insertChild(child, node.getChildCount());
+```
 
 ### Traversing a Layout Tree
 
@@ -117,40 +116,20 @@ for (auto child : node.getChildren()) {
   child.getContext().doStuff();
 }
 ```
-You can also traverse the entire tree starting from the root:
 
-```c++
-std::vector<Node<Ctx>> allNodes;
-layout.walkTree([&](const auto& node) {
-    allNodes.emplace_back(node);
-});
-```
+This allows for straightforward recursion. You can store the resulting references in order and reversely iterate over it if you need to walk the tree in reverse implicit Z-order, such as for hit-testing.
 
 ### Important: Node Lifetime
 
-A `Node<Ctx>` is a non-owning reference to a node that is managed by a `Layout`. The node's memory is freed when the `Layout` object is destroyed or when you explicitly call `layout.removeNode(node)`.
+A `Node<Ctx>` is a non-owning reference to a node that is managed by a `Layout`. The node's memory is freed when the `Layout` object is destroyed or when you explicitly call `layout.destroyNode(node)`.
 
-Be careful to discard any `Node<Ctx>` objects you have stored elsewhere after removing them from the layout, as they will become invalid. You can check for validity by using the `if (node)` pattern.
+Be careful to discard any `Node<Ctx>` objects you have stored elsewhere after removing them from the layout, as they will become invalid. You can check for validity of a specific reference by using `node.valid()`.
+Note that in the case of removal, only the reference used to remove the node will become invalid. The rest will become dangling.
 
 ## Context
 Once you have a node from a layout, its context can be accessed with `getContext()`.
-Note that this returns an optional wrapped reference to your context, i.e. `std::optional<std::reference_wrapper<Ctx>>`.
+The previous version of this library returned an optional wrapped reference. As of v2.0.0, contexts
+are tightly coupled with Nodes within a Layout, so they are no longer optional.
 ```c++
-auto ctxWrapper = node.getContext() // std::optional<std::reference_wrapper<DoStuffCtx>>
-if (ctxWrapper) {
-  auto& ctx = ctxWrapper->get(); // DoStuffCtx& (also available as const)
-  ctx.doStuff();
-}
-```
-
-## Usage without Layout
-`yoga-cpp` can be used as plain Yoga bindings by directly constructing
-OwningNodes yourself and hooking them together. The method names mostly follow
-the C API's naming conventions, in pascalCase and without prefixes,
-except `Layout` methods which property names with styles are prefixed by `getLayout` or `setLayout`
-instead of just `get` or `set`.
-
-```c++
-using MyNode = OwningNode<>; // node type with empty/monostate ctx
-auto node = MyNode{}; // fresh, blank node that will be destroyed when the scope exits
+MyLayoutCtx& ctx = node.getContext(); 
 ```
