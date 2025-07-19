@@ -47,7 +47,7 @@ The project will download and link Yoga for you, so use yoga-cpp as a drop-in re
 
 ## Barebones Example
 ```c++
-#include <yoga-cpp/yoga.hpp>
+#include <yoga-cpp/yogav1.hpp>
 #include <iostream>
 #include <format>
 

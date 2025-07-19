@@ -1,0 +1,24 @@
+name: Run C++ Tests
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -S . -DYOGACPP_BUILD_TESTS=ON
+
+      - name: Build project
+        run: cmake --build build
+
+      - name: Run tests
+        working-directory: ./build
+        run: ctest --output-on-failure

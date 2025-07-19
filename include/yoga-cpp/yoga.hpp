@@ -1,191 +1,306 @@
 #pragma once
 
-#include <algorithm>
 #include <cassert>
-#include <functional>
-#include <optional>
+#include <iterator>
+#include <memory>
 #include <ranges>
-#include <type_traits>
-#include <utility>
-#include <vector>
+#include <unordered_map>
+
+
 #include "yoga/Yoga.h"
 
 namespace Yoga
 {
-    template <typename T>
-    concept DefaultConstructible = std::is_default_constructible_v<T>;
-
-    template <DefaultConstructible Ctx>
-    class Config
+    template <typename Node>
+    class ChildIterator
     {
     public:
-        Config() : _ygConfig{YGConfigNew()} { setContext(&_context); }
-        ~Config()
+        using iterator_category = std::random_access_iterator_tag;
+        using value_type = Node;
+        using difference_type = std::ptrdiff_t;
+        using pointer = Node*;
+        using reference = Node;
+
+        ChildIterator() : _index{0}, _size{0} {}
+
+        explicit ChildIterator(const Node& parent) : _parent{parent}, _index{0}, _size{parent.getChildCount()} {}
+
+        explicit ChildIterator(const Node& parent, const difference_type index, const size_t size) :
+            _parent{parent}, _index(index), _size(size)
         {
-            if (_ygConfig != nullptr)
-                YGConfigFree(_ygConfig);
         }
 
-        Config(const Config&) = delete;
-        Config& operator=(const Config&) = delete;
-
-        Config(Config&& other) noexcept : _ygConfig{other._ygConfig}, _context{std::move(other._context)}
+        reference operator*() const
         {
-            other._ygConfig = nullptr;
-            if (this->_ygConfig != nullptr)
-            {
-                YGConfigSetContext(_ygConfig, &_context);
-            }
+            assert(_index >= 0 && static_cast<size_t>(_index) < _size && "Iterator out of bounds");
+            return _parent.getChild(_index);
         }
-        Config& operator=(Config&& other) noexcept
+
+        pointer operator->()
         {
-            if (this != &other)
-            {
-                if (this->_ygConfig != nullptr)
-                {
-                    YGConfigFree(_ygConfig);
-                }
-                _ygConfig = other._ygConfig;
-                other._ygConfig = nullptr;
-                _context = std::move(other._context);
-                if (this->_ygConfig != nullptr)
-                {
-                    YGConfigSetContext(_ygConfig, &_context);
-                }
-            }
+            assert(_index >= 0 && static_cast<size_t>(_index) < _size && "Iterator out of bounds");
+            _proxyNode = _parent.getChild(_index);
+            return &_proxyNode;
+        }
+
+        reference operator[](const difference_type offset) const
+        {
+            const auto newIndex = _index + offset;
+            assert(newIndex >= 0 && static_cast<size_t>(newIndex) < _size && "Iterator out of bounds");
+            return _parent.getChild(newIndex);
+        }
+
+        ChildIterator& operator++()
+        {
+            ++_index;
             return *this;
         }
 
-        void setUseWebDefaults(const bool useWebDefaults) { YGConfigSetUseWebDefaults(_ygConfig, useWebDefaults); }
-        [[nodiscard]] bool getUseWebDefaults() const { return YGConfigGetUseWebDefaults(_ygConfig); }
-
-        void setPointScaleFactor(const float pointScaleFactor)
+        ChildIterator operator++(int)
         {
-            YGConfigSetPointScaleFactor(_ygConfig, pointScaleFactor);
-        }
-        [[nodiscard]] float getPointScaleFactor() const { return YGConfigGetPointScaleFactor(_ygConfig); }
-
-        void setErrata(const YGErrata errata) { YGConfigSetErrata(_ygConfig, errata); }
-        [[nodiscard]] YGErrata getErrata() const { return YGConfigGetErrata(_ygConfig); }
-
-        void setLogger(const YGLogger logger) { YGConfigSetLogger(_ygConfig, logger); }
-
-        void setContext(Ctx* context) { YGConfigSetContext(_ygConfig, context); }
-
-        std::optional<std::reference_wrapper<Ctx>> getContext() noexcept
-        {
-            auto* ctxPtr = YGConfigGetContext(_ygConfig);
-            if (ctxPtr == nullptr)
-            {
-                return std::nullopt;
-            }
-            return std::ref(*static_cast<Ctx*>(ctxPtr));
+            ChildIterator temp = *this;
+            ++(*this);
+            return temp;
         }
 
-        std::optional<std::reference_wrapper<const Ctx>> getContext() const noexcept
+        ChildIterator& operator--()
         {
-            auto* ctxPtr = YGConfigGetContext(_ygConfig);
-            if (ctxPtr == nullptr)
-            {
-                return std::nullopt;
-            }
-            return std::ref(*static_cast<const Ctx*>(ctxPtr));
+            --_index;
+            return *this;
         }
 
-        [[nodiscard]] YGConfigRef getRef() const noexcept { return _ygConfig; }
-        [[nodiscard]] YGConfigConstRef getConstRef() const noexcept { return _ygConfig; }
+        ChildIterator operator--(int)
+        {
+            ChildIterator temp = *this;
+            --(*this);
+            return temp;
+        }
+
+        ChildIterator& operator+=(const difference_type offset)
+        {
+            _index += offset;
+            return *this;
+        }
+
+        ChildIterator& operator-=(const difference_type offset)
+        {
+            _index -= offset;
+            return *this;
+        }
+
+        friend ChildIterator operator+(const ChildIterator& it, difference_type offset)
+        {
+            return ChildIterator{it._parent, it._index + offset, it._size};
+        }
+
+        friend ChildIterator operator+(difference_type offset, const ChildIterator& it) { return it + offset; }
+
+        friend ChildIterator operator-(const ChildIterator& it, difference_type offset)
+        {
+            return ChildIterator{it._parent, it._index - offset, it._size};
+        }
+
+        difference_type operator-(const ChildIterator& other) const { return _index - other._index; }
+
+        bool operator==(const ChildIterator& other) const { return _index == other._index; }
+        bool operator!=(const ChildIterator& other) const { return _index != other._index; }
+        bool operator<(const ChildIterator& other) const { return _index < other._index; }
+        bool operator>(const ChildIterator& other) const { return _index > other._index; }
+        bool operator<=(const ChildIterator& other) const { return _index <= other._index; }
+        bool operator>=(const ChildIterator& other) const { return _index >= other._index; }
 
     private:
-        YGConfigRef _ygConfig;
-        Ctx _context;
+        Node _parent;
+        difference_type _index;
+        size_t _size;
+        Node _proxyNode;
     };
 
-    /**
-     * Non-owning representation of a Yoga node.
-     * Contains most of the Yoga API as methods.
-     * You should acquire one from a Yoga::Layout.
-     * @tparam Ctx Context type stored per node - must be default constructible
-     */
-    template <DefaultConstructible Ctx = std::monostate>
+    template <typename Node>
+    class ChildRange : public std::ranges::view_interface<ChildRange<Node>>
+    {
+    public:
+        ChildRange() = default;
+
+        explicit ChildRange(const Node& parent) : _parent{parent} {}
+
+        ChildIterator<Node> begin() const
+        {
+            if (!_parent.valid())
+            {
+                return ChildIterator<Node>{};
+            }
+
+            return ChildIterator<Node>{_parent};
+        }
+
+        ChildIterator<Node> end() const
+        {
+            if (!_parent.valid())
+            {
+                return ChildIterator<Node>{};
+            }
+
+            const auto count = _parent.getChildCount();
+
+            return ChildIterator<Node>{_parent, static_cast<std::ptrdiff_t>(count), count};
+        }
+
+    private:
+        Node _parent;
+    };
+
+    template <typename Ctx>
+    class Layout;
+
+    template <typename Ctx>
+    class Node;
+
+    template <typename Ctx>
+    class Layout
+    {
+    public:
+        using context_type = Ctx;
+        using node_type = Node<Ctx>;
+
+        Layout() = default;
+        ~Layout()
+        {
+            for (auto& [nodeRef, context] : _nodeContexts)
+            {
+                YGNodeFree(nodeRef);
+            }
+            _nodeContexts.clear();
+        }
+
+        // Pin layout in memory since it's a manager.
+        Layout(const Layout&) = delete;
+        Layout& operator=(const Layout&) = delete;
+        Layout(Layout&&) = delete;
+        Layout& operator=(Layout&&) = delete;
+
+        template <typename... Args>
+        node_type createNode(Args&&... args)
+        {
+            auto ygNode = YGNodeNew();
+            _nodeContexts.try_emplace(ygNode, std::make_unique<context_type>(std::forward<Args>(args)...));
+            auto node = node_type{this, ygNode};
+            node.setContext(_nodeContexts.at(ygNode).get());
+            return node;
+        }
+
+        void destroyNode(node_type& node)
+        {
+            if (node.get() == nullptr)
+                return;
+
+            auto it = _nodeContexts.find(node.get());
+            assert(it != _nodeContexts.end() && "Layout does not contain this node");
+            if (it != _nodeContexts.end())
+            {
+                YGNodeFree(it->first);
+                _nodeContexts.erase(it);
+                node.invalidate();
+            }
+        }
+
+    private:
+        std::unordered_map<YGNodeRef, std::unique_ptr<context_type>> _nodeContexts;
+    };
+
+
+    template <typename Ctx>
     class Node
     {
     public:
-        template <DefaultConstructible LayoutCtx, DefaultConstructible ConfigCtx>
-        friend class Layout;
+        using layout_type = Layout<Ctx>;
+        using context_type = typename layout_type::context_type;
 
-        template <DefaultConstructible OwningCtx>
-        friend class OwningNode;
-
-        using context_type = Ctx;
-
-        Node() = delete;
-
-        explicit Node(YGNodeRef ref) noexcept : _ygNode{ref} {}
-
-        ~Node() = default;
-
-        Node(const Node& other) = default;
-        Node& operator=(const Node& other) = default;
-        Node(Node&& other) noexcept = default;
-        Node& operator=(Node&& other) noexcept = default;
-
-        explicit operator bool() const noexcept { return _ygNode != nullptr; }
+        Node() : _layout{nullptr}, _node{nullptr} {}
 
         /**
-         * Iterator implementation for node children
+         * @brief Checks if two Node handles refer to the same underlying Yoga node.
+         *
+         * This allows Nodes to be used in GTest assertions like EXPECT_EQ.
+         *
+         * @param other The other node handle to compare against.
+         * @return True if both handles point to the same node, false otherwise.
          */
-        class ChildIterator
+        bool operator==(const Node& other) const noexcept { return get() == other.get(); }
+
+        /**
+         * @brief Checks if two Node handles refer to different underlying Yoga nodes.
+         * @param other The other node handle to compare against.
+         * @return True if the handles point to different nodes, false otherwise.
+         */
+        bool operator!=(const Node& other) const noexcept { return !(*this == other); }
+
+
+        [[nodiscard]] bool valid() const noexcept { return _layout != nullptr && _node != nullptr; }
+
+        context_type& getContext() noexcept
         {
-        public:
-            ChildIterator() = delete;
+            assert_valid();
+            return *static_cast<context_type*>(YGNodeGetContext(_node));
+        }
 
-            ChildIterator(YGNodeRef node, const size_t index) noexcept : _ygNode{node}, _index{index} {}
-
-            ChildIterator& operator++() noexcept
-            {
-                ++_index;
-                return *this;
-            }
-
-            ChildIterator operator++(int) noexcept
-            {
-                ChildIterator tmp = *this;
-                ++_index;
-                return tmp;
-            }
-
-            constexpr bool operator!=(const ChildIterator& other) const noexcept
-            {
-                return _ygNode != other._ygNode || _index != other._index;
-            }
-            constexpr bool operator==(const ChildIterator& other) const noexcept
-            {
-                return _ygNode == other._ygNode && _index == other._index;
-            }
-
-            Node operator*() const noexcept { return Node{YGNodeGetChild(_ygNode, _index)}; }
-
-            constexpr std::ptrdiff_t operator-(const ChildIterator& other) const noexcept
-            {
-                return static_cast<std::ptrdiff_t>(_index) - static_cast<std::ptrdiff_t>(other._index);
-            }
-
-        private:
-            YGNodeRef _ygNode;
-            size_t _index;
-        };
-
-        class ChildView : public std::ranges::view_interface<ChildView>
+        const context_type& getContext() const noexcept
         {
-        public:
-            explicit ChildView(const Node& node) noexcept : _ygNode{node.getRef()} {}
+            assert_valid();
+            return *YGNodeGetContext(_node);
+        }
 
-            auto begin() const noexcept { return ChildIterator{_ygNode, 0}; }
-            auto end() const noexcept { return ChildIterator{_ygNode, YGNodeGetChildCount(_ygNode)}; }
+        void setContext(context_type* ctxPtr) { YGNodeSetContext(_node, ctxPtr); }
 
-        private:
-            YGNodeRef _ygNode;
-        };
+        [[nodiscard]] YGNodeRef get() const noexcept { return _node; }
+
+        [[nodiscard]] size_t getChildCount() const noexcept
+        {
+            assert_valid();
+            return YGNodeGetChildCount(_node);
+        }
+
+        Node getChild(const size_t index) const
+        {
+            assert_valid();
+            return Node{_layout, YGNodeGetChild(_node, index)};
+        }
+
+        ChildRange<Node> getChildren()
+        {
+            assert_valid();
+            return ChildRange<Node>{*this};
+        }
+
+        Node getParent()
+        {
+            assert_valid();
+            return Node{_layout, YGNodeGetParent(_node)};
+        }
+
+        void insertChild(const Node& child, const size_t index = 0)
+        {
+            assert_valid();
+            child.assert_valid();
+            assert(_layout == child._layout && "Nodes must belong to the same layout");
+            YGNodeInsertChild(_node, child.get(), index);
+        }
+
+        void removeChild(const Node& child)
+        {
+            assert_valid();
+            child.assert_valid();
+            YGNodeRemoveChild(_node, child.get());
+        }
+
+        template <typename... Args>
+        Node createChild(Args&&... args)
+        {
+            assert_valid();
+            auto child = _layout->createNode(std::forward<Args>(args)...);
+            insertChild(child, getChildCount());
+            return child;
+        }
 
         /**
          * Resets this node to its original state.
@@ -196,8 +311,8 @@ namespace Yoga
          */
         void reset() noexcept
         {
-            assert(_ygNode != nullptr && "Reset called on invalid node");
-            YGNodeReset(_ygNode);
+            assert_valid();
+            YGNodeReset(_node);
         }
 
         /**
@@ -209,8 +324,8 @@ namespace Yoga
         void calculateLayout(const float width, const float height,
                              const YGDirection direction = YGDirectionLTR) noexcept
         {
-            assert(_ygNode != nullptr && "Calculate layout called on invalid node");
-            YGNodeCalculateLayout(_ygNode, width, height, direction);
+            assert_valid();
+            YGNodeCalculateLayout(_node, width, height, direction);
         }
 
         /**
@@ -218,8 +333,8 @@ namespace Yoga
          */
         [[nodiscard]] bool hasNewLayout() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeGetHasNewLayout(_ygNode);
+            assert_valid();
+            return YGNodeGetHasNewLayout(_node);
         }
 
         /**
@@ -227,31 +342,22 @@ namespace Yoga
          */
         void setHasNewLayout(const bool hasNewLayout) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeSetHasNewLayout(_ygNode, hasNewLayout);
+            assert_valid();
+            YGNodeSetHasNewLayout(_node, hasNewLayout);
         }
 
         /**
          * @return Whether the node has changes that require recalculating its layout
          */
-        [[nodiscard]] bool isDirty() const noexcept { return YGNodeIsDirty(_ygNode); }
+        [[nodiscard]] bool isDirty() const noexcept { return YGNodeIsDirty(_node); }
 
         /**
          * Marks a node as requiring a layout recalculation
          */
         void markDirty() noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeMarkDirty(_ygNode);
-        }
-
-        /**
-         * @return The number of children associated with this node
-         */
-        [[nodiscard]] size_t getChildCount() const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeGetChildCount(_ygNode);
+            assert_valid();
+            YGNodeMarkDirty(_node);
         }
 
         /**
@@ -259,8 +365,8 @@ namespace Yoga
          */
         void setNodeType(const YGNodeType nodeType) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeSetNodeType(_ygNode, nodeType);
+            assert_valid();
+            YGNodeSetNodeType(_node, nodeType);
         }
 
         /**
@@ -268,8 +374,8 @@ namespace Yoga
          */
         [[nodiscard]] YGNodeType getNodeType() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeGetNodeType(_ygNode);
+            assert_valid();
+            return YGNodeGetNodeType(_node);
         }
 
         /**
@@ -277,8 +383,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutLeft() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetLeft(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetLeft(_node);
         }
 
         /**
@@ -286,8 +392,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutTop() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetTop(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetTop(_node);
         }
 
         /**
@@ -295,8 +401,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutWidth() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetWidth(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetWidth(_node);
         }
 
         /**
@@ -304,8 +410,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutHeight() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetHeight(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetHeight(_node);
         }
 
         /**
@@ -313,8 +419,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutBottom() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetBottom(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetBottom(_node);
         }
 
         /**
@@ -322,8 +428,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutRight() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetRight(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetRight(_node);
         }
 
         /**
@@ -331,8 +437,8 @@ namespace Yoga
          */
         [[nodiscard]] YGDirection getLayoutDirection() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetDirection(_ygNode);
+            assert_valid();
+            return YGNodeLayoutGetDirection(_node);
         }
 
         /**
@@ -341,8 +447,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutMargin(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetMargin(_ygNode, edge);
+            assert_valid();
+            return YGNodeLayoutGetMargin(_node, edge);
         }
 
         /**
@@ -351,8 +457,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutBorder(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetBorder(_ygNode, edge);
+            assert_valid();
+            return YGNodeLayoutGetBorder(_node, edge);
         }
 
         /**
@@ -361,8 +467,8 @@ namespace Yoga
          */
         [[nodiscard]] float getLayoutPadding(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeLayoutGetPadding(_ygNode, edge);
+            assert_valid();
+            return YGNodeLayoutGetPadding(_node, edge);
         }
 
         /**
@@ -371,8 +477,8 @@ namespace Yoga
          */
         void copyStyle(const Node& other) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeCopyStyle(_ygNode, other._ygNode);
+            assert_valid();
+            YGNodeCopyStyle(_node, other._node);
         }
 
         /**
@@ -382,8 +488,8 @@ namespace Yoga
          */
         void setDirection(const YGDirection direction) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetDirection(_ygNode, direction);
+            assert_valid();
+            YGNodeStyleSetDirection(_node, direction);
         }
 
         /**
@@ -391,8 +497,8 @@ namespace Yoga
          */
         [[nodiscard]] YGDirection getDirection() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetDirection(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetDirection(_node);
         }
 
         /**
@@ -400,8 +506,8 @@ namespace Yoga
          */
         void setFlexDirection(const YGFlexDirection flexDirection) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexDirection(_ygNode, flexDirection);
+            assert_valid();
+            YGNodeStyleSetFlexDirection(_node, flexDirection);
         }
 
         /**
@@ -409,8 +515,8 @@ namespace Yoga
          */
         [[nodiscard]] YGFlexDirection getFlexDirection() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetFlexDirection(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetFlexDirection(_node);
         }
 
         /**
@@ -422,8 +528,8 @@ namespace Yoga
          */
         void setJustifyContent(const YGJustify justifyContent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetJustifyContent(_ygNode, justifyContent);
+            assert_valid();
+            YGNodeStyleSetJustifyContent(_node, justifyContent);
         }
 
         /**
@@ -435,8 +541,8 @@ namespace Yoga
          */
         [[nodiscard]] YGJustify getJustifyContent() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetJustifyContent(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetJustifyContent(_node);
         }
 
         /**
@@ -445,8 +551,8 @@ namespace Yoga
          */
         void setAlignContent(const YGAlign alignContent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetAlignContent(_ygNode, alignContent);
+            assert_valid();
+            YGNodeStyleSetAlignContent(_node, alignContent);
         }
 
         /**
@@ -459,8 +565,8 @@ namespace Yoga
          */
         [[nodiscard]] YGAlign getAlignContent() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetAlignContent(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetAlignContent(_node);
         }
 
         /**
@@ -472,8 +578,8 @@ namespace Yoga
          */
         void setAlignItems(const YGAlign alignItems) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetAlignItems(_ygNode, alignItems);
+            assert_valid();
+            YGNodeStyleSetAlignItems(_node, alignItems);
         }
 
         /**
@@ -486,8 +592,8 @@ namespace Yoga
          */
         [[nodiscard]] YGAlign getAlignItems() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetAlignItems(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetAlignItems(_node);
         }
 
         /**
@@ -495,8 +601,8 @@ namespace Yoga
          */
         void setAlignSelf(const YGAlign alignSelf) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetAlignSelf(_ygNode, alignSelf);
+            assert_valid();
+            YGNodeStyleSetAlignSelf(_node, alignSelf);
         }
 
         /**
@@ -504,8 +610,8 @@ namespace Yoga
          */
         [[nodiscard]] YGAlign getAlignSelf() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetAlignSelf(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetAlignSelf(_node);
         }
 
         /**
@@ -513,8 +619,8 @@ namespace Yoga
          */
         void setPositionType(const YGPositionType positionType) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetPositionType(_ygNode, positionType);
+            assert_valid();
+            YGNodeStyleSetPositionType(_node, positionType);
         }
 
         /**
@@ -522,8 +628,8 @@ namespace Yoga
          */
         [[nodiscard]] YGPositionType getPositionType() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetPositionType(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetPositionType(_node);
         }
 
         /**
@@ -531,8 +637,8 @@ namespace Yoga
          */
         void setFlexWrap(const YGWrap flexWrap) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexWrap(_ygNode, flexWrap);
+            assert_valid();
+            YGNodeStyleSetFlexWrap(_node, flexWrap);
         }
 
         /**
@@ -540,8 +646,8 @@ namespace Yoga
          */
         [[nodiscard]] YGWrap getFlexWrap() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetFlexWrap(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetFlexWrap(_node);
         }
 
         /**
@@ -549,8 +655,8 @@ namespace Yoga
          */
         void setOverflow(const YGOverflow overflow) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetOverflow(_ygNode, overflow);
+            assert_valid();
+            YGNodeStyleSetOverflow(_node, overflow);
         }
 
         /**
@@ -558,8 +664,8 @@ namespace Yoga
          */
         [[nodiscard]] YGOverflow getOverflow() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetOverflow(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetOverflow(_node);
         }
 
         /**
@@ -567,8 +673,8 @@ namespace Yoga
          */
         void setDisplay(const YGDisplay display) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetDisplay(_ygNode, display);
+            assert_valid();
+            YGNodeStyleSetDisplay(_node, display);
         }
 
         /**
@@ -576,8 +682,8 @@ namespace Yoga
          */
         [[nodiscard]] YGDisplay getDisplay() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetDisplay(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetDisplay(_node);
         }
 
         /**
@@ -585,8 +691,8 @@ namespace Yoga
          */
         void setFlex(const float flex) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlex(_ygNode, flex);
+            assert_valid();
+            YGNodeStyleSetFlex(_node, flex);
         }
 
         /**
@@ -594,8 +700,8 @@ namespace Yoga
          */
         [[nodiscard]] float getFlex() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetFlex(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetFlex(_node);
         }
 
         /**
@@ -603,8 +709,8 @@ namespace Yoga
          */
         void setFlexGrow(const float flexGrow) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexGrow(_ygNode, flexGrow);
+            assert_valid();
+            YGNodeStyleSetFlexGrow(_node, flexGrow);
         }
 
         /**
@@ -612,8 +718,8 @@ namespace Yoga
          */
         [[nodiscard]] float getFlexGrow() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetFlexGrow(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetFlexGrow(_node);
         }
 
         /**
@@ -621,8 +727,8 @@ namespace Yoga
          */
         void setFlexShrink(const float flexShrink) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexShrink(_ygNode, flexShrink);
+            assert_valid();
+            YGNodeStyleSetFlexShrink(_node, flexShrink);
         }
 
         /**
@@ -630,8 +736,8 @@ namespace Yoga
          */
         [[nodiscard]] float getFlexShrink() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetFlexShrink(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetFlexShrink(_node);
         }
 
         /**
@@ -639,8 +745,8 @@ namespace Yoga
          */
         void setFlexBasis(const float flexBasis) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexBasis(_ygNode, flexBasis);
+            assert_valid();
+            YGNodeStyleSetFlexBasis(_node, flexBasis);
         }
 
         /**
@@ -648,8 +754,8 @@ namespace Yoga
          */
         void setFlexBasisPercent(const float flexBasisPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexBasisPercent(_ygNode, flexBasisPercent);
+            assert_valid();
+            YGNodeStyleSetFlexBasisPercent(_node, flexBasisPercent);
         }
 
         /**
@@ -657,8 +763,8 @@ namespace Yoga
          */
         void setFlexBasisAuto() noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetFlexBasisAuto(_ygNode);
+            assert_valid();
+            YGNodeStyleSetFlexBasisAuto(_node);
         }
 
         /**
@@ -666,8 +772,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getFlexBasis() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetFlexBasis(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetFlexBasis(_node);
         }
 
         /**
@@ -680,8 +786,8 @@ namespace Yoga
          */
         void setPosition(const YGEdge edge, const float position) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetPosition(_ygNode, edge, position);
+            assert_valid();
+            YGNodeStyleSetPosition(_node, edge, position);
         }
 
         /**
@@ -694,8 +800,8 @@ namespace Yoga
          */
         void setPositionPercent(const YGEdge edge, const float positionPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetPositionPercent(_ygNode, edge, positionPercent);
+            assert_valid();
+            YGNodeStyleSetPositionPercent(_node, edge, positionPercent);
         }
 
         /**
@@ -705,8 +811,8 @@ namespace Yoga
          */
         void setPositionAuto(const YGEdge edge) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetPositionAuto(_ygNode, edge);
+            assert_valid();
+            YGNodeStyleSetPositionAuto(_node, edge);
         }
 
         /**
@@ -718,8 +824,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getPosition(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetPosition(_ygNode, edge);
+            assert_valid();
+            return YGNodeStyleGetPosition(_node, edge);
         }
 
         /**
@@ -732,8 +838,8 @@ namespace Yoga
          */
         void setMargin(const YGEdge edge, const float margin) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMargin(_ygNode, edge, margin);
+            assert_valid();
+            YGNodeStyleSetMargin(_node, edge, margin);
         }
 
         /**
@@ -743,8 +849,8 @@ namespace Yoga
          */
         void setMarginPercent(const YGEdge edge, const float marginPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMarginPercent(_ygNode, edge, marginPercent);
+            assert_valid();
+            YGNodeStyleSetMarginPercent(_node, edge, marginPercent);
         }
 
         /**
@@ -757,8 +863,8 @@ namespace Yoga
          */
         void setMarginAuto(const YGEdge edge) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMarginAuto(_ygNode, edge);
+            assert_valid();
+            YGNodeStyleSetMarginAuto(_node, edge);
         }
 
         /**
@@ -769,8 +875,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getMargin(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetMargin(_ygNode, edge);
+            assert_valid();
+            return YGNodeStyleGetMargin(_node, edge);
         }
 
         /**
@@ -784,8 +890,8 @@ namespace Yoga
          */
         void setPadding(const YGEdge edge, const float padding) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetPadding(_ygNode, edge, padding);
+            assert_valid();
+            YGNodeStyleSetPadding(_node, edge, padding);
         }
 
         /**
@@ -798,8 +904,8 @@ namespace Yoga
          */
         void setPaddingPercent(const YGEdge edge, const float paddingPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetPaddingPercent(_ygNode, edge, paddingPercent);
+            assert_valid();
+            YGNodeStyleSetPaddingPercent(_node, edge, paddingPercent);
         }
 
         /**
@@ -809,8 +915,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getPadding(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetPadding(_ygNode, edge);
+            assert_valid();
+            return YGNodeStyleGetPadding(_node, edge);
         }
 
         /**
@@ -821,8 +927,8 @@ namespace Yoga
          */
         void setBorder(const YGEdge edge, const float border) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetBorder(_ygNode, edge, border);
+            assert_valid();
+            YGNodeStyleSetBorder(_node, edge, border);
         }
 
         /**
@@ -833,8 +939,8 @@ namespace Yoga
          */
         [[nodiscard]] float getBorder(const YGEdge edge) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetBorder(_ygNode, edge);
+            assert_valid();
+            return YGNodeStyleGetBorder(_node, edge);
         }
 
         /**
@@ -844,8 +950,8 @@ namespace Yoga
          */
         void setGap(const YGGutter gutter, const float length) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetGap(_ygNode, gutter, length);
+            assert_valid();
+            YGNodeStyleSetGap(_node, gutter, length);
         }
 
         /**
@@ -855,8 +961,8 @@ namespace Yoga
          */
         void setGapPercent(const YGGutter gutter, const float lengthPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetGapPercent(_ygNode, gutter, lengthPercent);
+            assert_valid();
+            YGNodeStyleSetGapPercent(_node, gutter, lengthPercent);
         }
 
         /**
@@ -866,8 +972,8 @@ namespace Yoga
          */
         [[nodiscard]] float getGap(const YGGutter gutter) const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetGap(_ygNode, gutter);
+            assert_valid();
+            return YGNodeStyleGetGap(_node, gutter);
         }
 
         /**
@@ -880,8 +986,8 @@ namespace Yoga
          */
         void setBoxSizing(const YGBoxSizing boxSizing) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetBoxSizing(_ygNode, boxSizing);
+            assert_valid();
+            YGNodeStyleSetBoxSizing(_node, boxSizing);
         }
 
         /**
@@ -895,8 +1001,8 @@ namespace Yoga
          */
         [[nodiscard]] YGBoxSizing getBoxSizing() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetBoxSizing(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetBoxSizing(_node);
         }
 
         /**
@@ -908,8 +1014,8 @@ namespace Yoga
          */
         void setWidth(const float width) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetWidth(_ygNode, width);
+            assert_valid();
+            YGNodeStyleSetWidth(_node, width);
         }
 
         /**
@@ -923,8 +1029,8 @@ namespace Yoga
          */
         void setWidthPercent(const float widthPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetWidthPercent(_ygNode, widthPercent);
+            assert_valid();
+            YGNodeStyleSetWidthPercent(_node, widthPercent);
         }
 
         /**
@@ -937,8 +1043,8 @@ namespace Yoga
          */
         void setWidthAuto() noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetWidthAuto(_ygNode);
+            assert_valid();
+            YGNodeStyleSetWidthAuto(_node);
         }
 
         /**
@@ -951,8 +1057,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getWidth() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetWidth(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetWidth(_node);
         }
 
         /**
@@ -964,8 +1070,8 @@ namespace Yoga
          */
         void setHeight(const float height) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetHeight(_ygNode, height);
+            assert_valid();
+            YGNodeStyleSetHeight(_node, height);
         }
 
         /**
@@ -978,8 +1084,8 @@ namespace Yoga
          */
         void setHeightPercent(const float heightPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetHeightPercent(_ygNode, heightPercent);
+            assert_valid();
+            YGNodeStyleSetHeightPercent(_node, heightPercent);
         }
 
         /**
@@ -990,8 +1096,8 @@ namespace Yoga
          */
         void setHeightAuto() noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetHeightAuto(_ygNode);
+            assert_valid();
+            YGNodeStyleSetHeightAuto(_node);
         }
 
         /**
@@ -1004,8 +1110,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getHeight() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetHeight(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetHeight(_node);
         }
 
         /**
@@ -1018,8 +1124,8 @@ namespace Yoga
          */
         void setMinWidth(const float minWidth) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMinWidth(_ygNode, minWidth);
+            assert_valid();
+            YGNodeStyleSetMinWidth(_node, minWidth);
         }
 
         /**
@@ -1034,8 +1140,8 @@ namespace Yoga
          */
         void setMinWidthPercent(const float minWidthPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMinWidthPercent(_ygNode, minWidthPercent);
+            assert_valid();
+            YGNodeStyleSetMinWidthPercent(_node, minWidthPercent);
         }
 
         /**
@@ -1048,8 +1154,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getMinWidth() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetMinWidth(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetMinWidth(_node);
         }
 
         /**
@@ -1062,8 +1168,8 @@ namespace Yoga
          */
         void setMinHeight(const float minHeight) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMinHeight(_ygNode, minHeight);
+            assert_valid();
+            YGNodeStyleSetMinHeight(_node, minHeight);
         }
 
         /**
@@ -1075,8 +1181,8 @@ namespace Yoga
          */
         void setMinHeightPercent(const float minHeightPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMinHeightPercent(_ygNode, minHeightPercent);
+            assert_valid();
+            YGNodeStyleSetMinHeightPercent(_node, minHeightPercent);
         }
 
         /**
@@ -1089,8 +1195,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getMinHeight() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetMinHeight(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetMinHeight(_node);
         }
 
         /**
@@ -1104,8 +1210,8 @@ namespace Yoga
          */
         void setMaxWidth(const float maxWidth) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMaxWidth(_ygNode, maxWidth);
+            assert_valid();
+            YGNodeStyleSetMaxWidth(_node, maxWidth);
         }
 
         /**
@@ -1118,8 +1224,8 @@ namespace Yoga
          */
         void setMaxWidthPercent(const float maxWidthPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMaxWidthPercent(_ygNode, maxWidthPercent);
+            assert_valid();
+            YGNodeStyleSetMaxWidthPercent(_node, maxWidthPercent);
         }
 
         /**
@@ -1131,8 +1237,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getMaxWidth() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetMaxWidth(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetMaxWidth(_node);
         }
 
         /**
@@ -1145,8 +1251,8 @@ namespace Yoga
          */
         void setMaxHeight(const float maxHeight) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMaxHeight(_ygNode, maxHeight);
+            assert_valid();
+            YGNodeStyleSetMaxHeight(_node, maxHeight);
         }
 
         /**
@@ -1160,8 +1266,8 @@ namespace Yoga
          */
         void setMaxHeightPercent(const float maxHeightPercent) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetMaxHeightPercent(_ygNode, maxHeightPercent);
+            assert_valid();
+            YGNodeStyleSetMaxHeightPercent(_node, maxHeightPercent);
         }
 
         /**
@@ -1174,8 +1280,8 @@ namespace Yoga
          */
         [[nodiscard]] YGValue getMaxHeight() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetMaxHeight(_ygNode);
+            assert_valid();
+            return YGNodeStyleGetMaxHeight(_node);
         }
 
         /**
@@ -1189,8 +1295,8 @@ namespace Yoga
          */
         void setAspectRatio(const float aspectRatio) noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            YGNodeStyleSetAspectRatio(_ygNode, aspectRatio);
+            assert_valid();
+            YGNodeStyleSetAspectRatio(_node, aspectRatio);
         }
 
         /**
@@ -1202,341 +1308,28 @@ namespace Yoga
          */
         [[nodiscard]] float getAspectRatio() const noexcept
         {
-            assert(_ygNode && "must be a valid node");
-            return YGNodeStyleGetAspectRatio(_ygNode);
-        }
-
-        /**
-         * Retrieves the current context associated with this node.
-         *
-         * The context provides relevant state information or parameters.
-         *
-         * @return The current context of this node.
-         */
-        [[nodiscard]] std::optional<std::reference_wrapper<Ctx>> getContext() noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            auto* ctxPtr = YGNodeGetContext(_ygNode);
-            if (ctxPtr == nullptr)
-            {
-                return std::nullopt;
-            }
-            return std::optional<std::reference_wrapper<Ctx>>{std::ref(*static_cast<Ctx*>(ctxPtr))};
-        }
-
-        [[nodiscard]] std::optional<std::reference_wrapper<const Ctx>> getContext() const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            auto* ctxPtr = YGNodeGetContext(_ygNode);
-            if (ctxPtr == nullptr)
-            {
-                return std::nullopt;
-            }
-            return std::optional<std::reference_wrapper<const Ctx>>{std::cref(*static_cast<const Ctx*>(ctxPtr))};
-        }
-
-        /**
-         * Retrieves a view of child nodes associated with this node.
-         *
-         * @return A view containing the child nodes of this node.
-         */
-        [[nodiscard]] ChildView getChildren() const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            return ChildView{*this};
-        }
-
-        /**
-         * Retrieves the child node at the specified index, or a null (invalid) reference.
-         *
-         * @param index The position of the child node to retrieve.
-         * @return The child node at the specified index. Can be a null reference.
-         */
-        [[nodiscard]] Node getChild(const size_t index) const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            return Node{YGNodeGetChild(_ygNode, index)};
-        }
-
-        /**
-         * Inserts a child node into the current node.
-         *
-         * The new child will be added to the list of children for this node.
-         *
-         * @param child The child node to insert.
-         */
-        void insertChild(const Node& child) noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            if (child._ygNode == nullptr)
-                return;
-            YGNodeInsertChild(_ygNode, child._ygNode, getChildCount());
-        }
-
-        /**
-         * Inserts a child node into the current node.
-         *
-         * The new child will be added to the list of children for this node.
-         *
-         * @param child The child node to insert.
-         * @param index Which index to insert the child at
-         */
-        void insertChild(const Node& child, const size_t index) noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            if (child._ygNode == nullptr)
-                return;
-            YGNodeInsertChild(_ygNode, child._ygNode, index);
-        }
-
-        /**
-         * Removes a child node from this node.
-         *
-         * The child node specified will be detached from the current node.
-         * If the specified node is not a child of this node, no action is taken.
-         *
-         * @param child The child node to be removed.
-         */
-        void removeChild(const Node& child) noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            if (child._ygNode == nullptr)
-                return;
-            YGNodeRemoveChild(_ygNode, child._ygNode);
-        }
-
-        /**
-         * Retrieves the parent node of this object, or a null (invalid) node if there is no parent.
-         *
-         * @return The parent node of this object or a null reference
-         */
-        Node getParent() const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            return Node{YGNodeGetParent(_ygNode)};
-        }
-
-        /**
-         * @return A raw YGNodeRef, which is an opaque pointer.
-         */
-        [[nodiscard]] YGNodeRef getRef() const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            return _ygNode;
-        }
-
-        /**
-         * @return A raw YGConstNodeRef, which is an opaque const pointer.
-         */
-        [[nodiscard]] YGNodeConstRef getConstRef() const noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            return _ygNode;
-        }
-
-        template <DefaultConstructible ConfigCtx>
-        void setConfig(Config<ConfigCtx>& config) noexcept
-        {
-            assert(_ygNode && "must be a valid node");
-            YGNodeSetConfig(_ygNode, config.getRef());
-        }
-
-    protected:
-        YGNodeRef _ygNode;
-
-        void setContext(Ctx* context) { YGNodeSetContext(_ygNode, context); }
-    };
-
-    /**
-     * An owning handle to a Yoga node. You probably want Yoga::Layout!
-     *
-     * Inherits functionality from Yoga::Node.
-     *
-     * @tparam Ctx Context type stored per node - must be default constructible
-     */
-    template <DefaultConstructible Ctx = std::monostate>
-    class OwningNode final : public Node<Ctx>
-    {
-
-        using base = Node<Ctx>;
-
-    public:
-        OwningNode() : base{YGNodeNew()} { this->setContext(&_context); }
-
-        template <DefaultConstructible ConfigCtx>
-        explicit OwningNode(const Config<ConfigCtx>& config) : base{YGNodeNewWithConfig(config.getRef())}
-        {
-            this->setContext(&_context);
-        }
-
-        OwningNode(const OwningNode& other) = delete;
-        OwningNode& operator=(const OwningNode& other) = delete;
-
-        OwningNode(OwningNode&& other) noexcept : base{other._ygNode}, _context{std::move(other._context)}
-        {
-            other._ygNode = nullptr;
-            if (this->_ygNode != nullptr)
-            {
-                this->setContext(&_context);
-            }
-        }
-
-        OwningNode& operator=(OwningNode&& other) noexcept
-        {
-            if (this != &other)
-            {
-                if (this->_ygNode != nullptr)
-                {
-                    YGNodeFree(this->_ygNode);
-                }
-                this->_ygNode = other._ygNode;
-                other._ygNode = nullptr;
-                _context = std::move(other._context);
-                if (this->_ygNode != nullptr)
-                {
-                    this->setContext(&_context);
-                }
-            }
-            return *this;
-        }
-
-        ~OwningNode()
-        {
-            if (this->_ygNode != nullptr)
-            {
-                YGNodeFree(this->_ygNode);
-            }
+            assert_valid();
+            return YGNodeStyleGetAspectRatio(_node);
         }
 
     private:
-        Ctx _context;
-    };
+        friend class Layout<Ctx>;
 
-    /**
-     * Layout manager for Yoga nodes with automatic lifetime management.
-     *
-     * Manages both the underlying YGNode instances and their associated contexts.
-     *
-     * @tparam Ctx Context type stored per node - must be default constructible
-     */
-    template <DefaultConstructible Ctx, DefaultConstructible ConfigCtx = std::monostate>
-    class Layout
-    {
-    public:
-        /**
-         * Creates a new layout with a root node sized to 100% width/height
-         */
-        Layout() : _root{nullptr}
+        Node(layout_type* layout, const YGNodeRef node) : _layout{layout}, _node{node}
         {
-            _config.setPointScaleFactor(1.f);
-            _root = Node<Ctx>{_nodes.emplace_back(_config).getRef()};
-            _root.setWidthPercent(100.f);
-            _root.setHeightPercent(100.f);
+            assert(layout != nullptr && "Layout must not be null");
         }
 
-        Layout(const Layout& other) = delete;
-        Layout& operator=(const Layout& other) = delete;
-
-        Layout(Layout&&) = default;
-        Layout& operator=(Layout&&) = default;
-
-        /**
-         * Creates a new node managed by this layout.
-         *
-         * The node will be automatically cleaned up when the layout is destroyed.
-         *
-         * @return Non-owning Node handle for the created node
-         */
-        Node<Ctx> createNode()
+        // Allows Layout to invalidate a handle after destruction.
+        void invalidate()
         {
-            auto& node = _nodes.emplace_back(_config);
-            return Node<Ctx>{node.getRef()};
+            _layout = nullptr;
+            _node = nullptr;
         }
 
-        /**
-         * Removes a node and all of its children from this layout.
-         *
-         * Also removes it from its parent and cleans up associated context.
-         *
-         * @param node The node to remove
-         */
-        void removeNode(const Node<Ctx>& node)
-        {
-            auto nodeRef = node.getRef();
+        void assert_valid() const { assert(valid() && "Node handle is invalid"); }
 
-            assert(_nodes.front().getRef() != nodeRef && "Cannot remove the root");
-
-            if (auto parent = node.getParent(); parent)
-            {
-                parent.removeChild(node);
-            }
-
-            for (auto child : node.getChildren())
-            {
-                removeNode(child);
-            }
-
-            std::erase_if(_nodes, [nodeRef](const OwningNode<Ctx>& owned) { return owned.getRef() == nodeRef; });
-        }
-
-        /**
-         * Add an existing node to the layout root.
-         *
-         * A node tree will not be part of the layout unless
-         * it is parented to the root.
-         * @param node The node to add
-         */
-        void addToRoot(const Node<Ctx>& node) { _root.insertChild(node); }
-
-        Node<Ctx> getRoot() { return Node{_root.getRef()}; }
-
-        [[nodiscard]] Config<ConfigCtx>& getConfig() { return _config; }
-        [[nodiscard]] const Config<ConfigCtx>& getConfig() const { return _config; }
-
-        /**
-         * Calculates the entire layout tree starting from this node.
-         * @param width Available width the layout can take up
-         * @param height Available height the layout can take up
-         * @param direction Reading direction (left-to-right by default)
-         */
-        void calculate(const float width, const float height, const YGDirection direction = YGDirectionLTR)
-        {
-            _root.calculateLayout(width, height, direction);
-        }
-
-        /**
-         * Walks the layout tree, invoking a visitor for each node
-         * in pre-order (parent, then children).
-         * @tparam Callable Any callable that accepts a const Node<Ctx>&
-         * @param visitor The callable to invoke for each node.
-         */
-        template<std::invocable<Node<Ctx>&> Callable>
-        void walkTree(Callable&& visitor) const
-        {
-            walkNode(getRoot(), visitor);
-        }
-    private:
-        Config<ConfigCtx> _config;
-        std::vector<OwningNode<Ctx>> _nodes;
-        Node<Ctx> _root;
-
-        /**
-         * Walks the layout tree, invoking a visitor for each node
-         * in pre-order (parent, then children).
-         * @tparam Callable Any callable that accepts a const Node<Ctx>&
-         * @param node The node to start walking from.
-         * @param visitor The callable to invoke for each node.
-         */
-        template<std::invocable<Node<Ctx>&> Callable>
-        void walkNode(Node<Ctx>& node, Callable& visitor) const
-        {
-            visitor(node);
-
-            for (auto child : node.getChildren())
-            {
-                walkNode(child, visitor);
-            }
-        }
-
+        layout_type* _layout;
+        YGNodeRef _node;
     };
 } // namespace Yoga
