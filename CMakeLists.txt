@@ -11,7 +11,8 @@ FetchContent_Declare(yoga
     GIT_REPOSITORY https://github.com/facebook/yoga.git
     GIT_TAG ${YOGA_VERSION}
 )
-
+set(YOGA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YOGA_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(yoga)
 
 add_library(yoga_cpp STATIC
@@ -34,6 +35,8 @@ if (YOGACPP_BUILD_EXAMPLES)
 endif()
 
 if (YOGACPP_BUILD_TESTS)
+    enable_testing()
+
     include(FetchContent)
     FetchContent_Declare(
             googletest
