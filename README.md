@@ -1,5 +1,5 @@
 # Yoga C++ (yoga-cpp)
-#### version 2.0.0 (Yoga version 3.2.1)
+#### version 2.0.1 (Yoga version 3.2.1)
 
 ## Background
 Yoga is a layout engine by Meta (née Facebook) which is written
@@ -30,7 +30,7 @@ include(FetchContent)
 
 FetchContent_Declare(yoga_cpp
     GIT_REPOSITORY https://github.com/detri/yoga-cpp.git
-    GIT_TAG v2.0.0
+    GIT_TAG v2.0.1
 )
 
 FetchContent_MakeAvailable(yoga_cpp)
