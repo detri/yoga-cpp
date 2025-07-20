@@ -247,7 +247,7 @@ namespace Yoga
         const context_type& getContext() const noexcept
         {
             assert_valid();
-            return *YGNodeGetContext(_node);
+            return *static_cast<context_type*>(YGNodeGetContext(_node));
         }
 
         void setContext(context_type* ctxPtr) { YGNodeSetContext(_node, ctxPtr); }
